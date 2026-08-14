@@ -11,6 +11,7 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 import pandas as pd
+from langchain_groq import ChatGroq
 
 
 # helper function
@@ -74,7 +75,7 @@ print(response.choices[0].message.content)
 '''
 
 
-def generate_sql_query(history: list, db_schema: str, db_dialect: str = "SQLite") -> str:
+def generate_sql_query(history: list, db_dialect: str = "SQLite") -> str:
     '''
     TODO
     '''
@@ -82,47 +83,62 @@ def generate_sql_query(history: list, db_schema: str, db_dialect: str = "SQLite"
     client = get_llm_client()
     # define model (from .env)
     model_name = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
+    backup_model_name = os.getenv("BACKUP_LLM_MODEL", "llama-3.1-8b-instant")
 
     # define system prompt (persona)
     system_prompt = f'''
-        You are a Transport Data Analyst specialized in the RailPulse database.
-        Your only job is to convert user requests in natural language to valid SQL queries using {db_dialect} dialect.
+        You are an expert Transport Data Analyst specializing in the RailPulse GTFS SQLite database.
+        Your job is to convert natural language requests into ultra-optimized SQL queries using {db_dialect} dialect.
 
-        DATABASE SCHEMA:
-        {db_schema}
+        DATABASE SCHEMA & COLUMNS:
+        - stops (stop_id, stop_name, stop_lat, stop_lon)
+        - stop_times (trip_id, arrival_time, departure_time, stop_id, stop_sequence)  -- NO service_id, NO stop_name
+        - trips (trip_id, route_id, service_id, trip_headsign, direction_id)          -- HAS service_id
+        - routes (route_id, route_short_name, route_long_name, route_type)
+        - calendar_dates (service_id, date, exception_type)
 
-        STRICT RULES:
-        1. Generate ONLY read-only queries (SELECT).
-        2. Use strictly syntax compatible with {db_dialect}.
-            - If dialect is SQLite: Use LOWER() and LIKE '%term%' for text matching, and strftime() for dates.
-            - If dialect is T-SQL / Azure SQL: Use standard SQL Server syntax and date functions.
-        3. Schema Relationships & Calendar Logic:
-            - `stop_name` exists ONLY in the `stops` table.
-            - You MUST JOIN `stop_times` with `stops` ON `stop_times.stop_id = stops.stop_id`.
-            - To filter by day of the week, JOIN `trips` with `calendar` ON `trips.service_id = calendar.service_id` and check the day column (e.g. `calendar.friday = 1` or `calendar.friday = '1'`).
-            - Do NOT restrict queries with `stop_sequence = 1` unless the user explicitly asks for "origin" or "starting station" (trains departing from a station include intermediate departures).
-            - For counting records, use `COUNT(DISTINCT trips.trip_id)` or `COUNT(*)`.
-            - ALWAYS use `calendar_dates` (NOT `calendar`) for dates and schedule filtering.
-            - `calendar_dates.date` is formatted as 'YYYYMMDD' (text/string, e.g. '20260514').
-            - To check day of the week in SQLite from 'YYYYMMDD' string:
-                * Convert to 'YYYY-MM-DD': `substr(date, 1, 4) || '-' || substr(date, 5, 2) || '-' || substr(date, 7, 2)`
-                * Use `strftime('%w', ...)` to get the day of week:
-                  - '0' = Sunday, '1' = Monday, '2' = Tuesday, '3' = Wednesday, '4' = Thursday, '5' = Friday, '6' = Saturday.
-                * Example for Friday: `strftime('%w', substr(cd.date, 1, 4) || '-' || substr(cd.date, 5, 2) || '-' || substr(cd.date, 7, 2)) = '5'`
-            - Filter active services using `calendar_dates.exception_type = 1`.
-            - NEVER filter `stop_sequence = 1` unless the user explicitly asks for origin/starting station.
-            - To count trains, use `COUNT(DISTINCT trips.trip_id)`.
-        4. Belgian Station Names Mapping & Filtering:
-            - Users will write station names in English, but the database uses official French/Dutch GTFS names.
-            - Always map English names to official database names when filtering `stop_name`:
-                * "Brussels Midi" / "Brussels South" -> 'Bruxelles-Midi'
-                * "Brussels Central" -> 'Bruxelles-Central'
-                * "Brussels North" -> 'Bruxelles-Nord'
-                * "Ghent" -> 'Gent%'
-                * "Antwerp" -> 'Antwerpen%'
-                * "Bruges" -> 'Brugge%'
-            - For safer matching, use `LOWER(stop_name) LIKE '%bruxelles-midi%'` or `LOWER(stop_name) LIKE '%midi%'`.
-        5. Return EXCLUSIVELY clean SQL code without Markdown formatting (no ```sql).
+        STRICT QUERY RULES FOR MAXIMUM PERFORMANCE:
+
+        1. MANDATORY `day_services` CTE FOR DAYS OF THE WEEK (CRITICAL FOR SPEED):
+           Whenever a day of the week is requested, you MUST define `day_services` CTE at the top of the query.
+           NEVER calculate `strftime` inside main queries or subqueries.
+           
+           Template:
+           WITH day_services AS (
+               SELECT DISTINCT service_id 
+               FROM calendar_dates 
+               WHERE exception_type = 1 
+                 AND strftime('%w', substr(date, 1, 4) || '-' || substr(date, 5, 2) || '-' || substr(date, 7, 2)) = 'X'
+           )
+           Day mapping 'X': '0'=Sunday, '1'=Monday, '2'=Tuesday, '3'=Wednesday, '4'=Thursday, '5'=Friday, '6'=Saturday.
+
+        2. MANDATORY `station_ids` CTE WHEN A STATION IS MENTIONED:
+           WITH station_ids AS (
+               SELECT stop_id FROM stops WHERE LOWER(stop_name) LIKE '%term%'
+           )
+
+        3. STRICT STRING LITERAL CLEANLINESS:
+           - ALWAYS write string search terms clearly with single quotes, e.g. LIKE '%anvers%' or LIKE '%bruxelles-midi%'.
+           - NEVER prefix search terms with table aliases or random letters (e.g., DO NOT write 'sbruxelles', 'Sgandi', or 'sbruxelles-midis').
+
+        4. FRENCH GTFS STATION MAP (BELGIAN STATIONS):
+           - "Antwerp" / "Antwerp Central" -> LIKE '%anvers%'
+           - "Ghent" -> LIKE '%gand%'
+           - "Bruges" -> LIKE '%bruges%'
+           - "Brussels Midi" / "Brussels South" -> LIKE '%bruxelles-midi%'
+           - "Brussels Central" -> LIKE '%bruxelles-central%'
+           - "Brussels North" -> LIKE '%bruxelles-nord%'
+
+        5. COLUMN ACCURACY & LOGIC:
+           - `service_id` belongs ONLY to `trips` and `calendar_dates`. NEVER query `stop_times.service_id` or `st.service_id`.
+           - `stop_name` belongs ONLY to `stops`.
+           - "Originate" / "Depart from start" -> Add `st.stop_sequence = 1`.
+           - "Serve" / "Pass through" / "Stop at" -> DO NOT filter by `stop_sequence`.
+           - "Top busiest stations" -> `GROUP BY s.stop_name ORDER BY COUNT(DISTINCT st.trip_id) DESC LIMIT 5`.
+
+        6. OUTPUT FORMAT:
+           - Return ONLY the executable SQL query string.
+           - Do NOT use markdown code blocks, backticks (```), or explanatory text.
     '''
     # LLMs APIs are totally stateless (without any memory)
     # simulation of a fluid conversation appending the messages to a list to create a messages history
@@ -130,13 +146,29 @@ def generate_sql_query(history: list, db_schema: str, db_dialect: str = "SQLite"
     # definition of messages as the system_prompt + the saved conversation history
     messages = [{"role": "system", "content": system_prompt}] + _format_history(history)
 
-    # API call
-    response = client.chat.completions.create(
-        model=model_name,
-        messages=messages,  # type: ignore
-        temperature=0,      # 0 for ensuring determinism in the generated SQL code
-        max_tokens=500      # ideal between 300 and 500 for railpulse objective
-    )
+    try:
+        # API call
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=messages,  # type: ignore
+            temperature=0,      # 0 for ensuring determinism in the generated SQL code
+            max_tokens=500      # ideal between 300 and 500 for railpulse objective
+        )
+
+    except Exception as e:
+        # Check if error is Rate Limit (429)
+        if "429" in str(e) or "rate_limit" in str(e).lower():
+            print(f"⚠️ Rate limit reached on '{model_name}'. Switching to backup model: '{backup_model_name}'...")
+            # Second attempt: Backup model (8B)
+            response = client.chat.completions.create(
+                model=backup_model_name,
+                messages=messages,  # type: ignore
+                temperature=0,
+                max_tokens=500
+            )
+        else:
+            # If it's a different error (e.g., network issue), raise it
+            raise e
 
     # save llm's answer and append it in history for next turns
     reply = response.choices[0].message.content or ""

@@ -43,3 +43,4 @@ Servono a testare aggregazioni complesse con GROUP BY, ORDER BY e LIMIT.
 Cosa verificare nella SQL: GROUP BY s.stop_name ORDER BY COUNT(DISTINCT t.trip_id) DESC LIMIT 5.
 * "Which route has the highest number of trips on Mondays?"
 Cosa verificare nella SQL: JOIN tra routes, trips e calendar_dates con GROUP BY r.route_id.
+
