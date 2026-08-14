@@ -1,0 +1,6 @@
+genai-venv/
+**/__pycache__/
+*.py[cod]
+.env
+*.db
+building_phase_app.py
