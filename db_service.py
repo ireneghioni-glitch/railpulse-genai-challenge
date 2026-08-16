@@ -13,7 +13,9 @@ import pyodbc
 from dotenv import load_dotenv
 import pandas as pd
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import OperationalError
 import os
+import time
 
 # reading .env file and loading environments variables
 load_dotenv()
@@ -33,7 +35,25 @@ def _get_engine():
         raise ValueError("DATABASE_CONNECTION_STRING not setted as an ambience variable.")
     
     # SQLAlchemy engine creation
-    engine = create_engine(conn_string)
+    engine = create_engine(conn_string, pool_pre_ping=True)
+
+    # --- COLD START (RETRY LOGIC) ---
+    max_retries = 3
+    delay_seconds = 15
+
+    for attempt in range(max_retries):
+        try:
+            # Connection test
+            with engine.connect() as conn:
+                pass  # connection was successfull, db is finally active
+            break     # exit the retry cycle
+        except OperationalError as e:
+            # last attempts and db hasn't still woken up
+            if attempt < max_retries - 1:
+                time.sleep(delay_seconds)
+            else:
+                # if after all the attempts it fails again, finally returns the original error
+                raise e
 
     return engine
 

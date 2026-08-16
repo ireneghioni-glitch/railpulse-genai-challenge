@@ -153,7 +153,7 @@ def main():
         unsafe_allow_html=True
     )
 
-    # Welcoming (Disappears after the first message is sent)
+    # Welcoming (disappears after the first message is sent)
     if len(st.session_state.conversation_history) == 0 and not user_prompt:
         st.markdown(
             """
