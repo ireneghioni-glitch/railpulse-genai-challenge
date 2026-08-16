@@ -4,3 +4,5 @@ genai-venv/
 .env
 *.db
 building_phase_app.py
+migrate.py
+.streamlit/secrets.toml
