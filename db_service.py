@@ -16,6 +16,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import OperationalError
 import os
 import time
+import re
 
 # reading .env file and loading environments variables
 load_dotenv()
@@ -132,12 +133,44 @@ def get_db_schema() -> str:
     return formatted_schema_string
 
 
+def _clean_sql_for_azure(sql_query: str) -> str:
+    """
+    Intercepts and automatically converts 'LIMIT N' clauses into 'SELECT TOP N'
+    to ensure 100% syntax compatibility with Azure SQL / T-SQL.
+    """
+    # Search for 'LIMIT N' at the end of the query
+    match = re.search(r'\bLIMIT\s+(\d+)\s*;?\s*$', sql_query, re.IGNORECASE)
+    if match:
+        limit_val = match.group(1)
+        # Remove 'LIMIT N'
+        sql_query = re.sub(r'\bLIMIT\s+\d+\s*;?\s*$', '', sql_query, flags=re.IGNORECASE).strip()
+        
+        # Find the main SELECT statement (the last SELECT in case of CTEs)
+        select_matches = list(re.finditer(r'\bSELECT\b', sql_query, re.IGNORECASE))
+        if select_matches:
+            last_select_idx = select_matches[-1].end()
+            # Check if DISTINCT follows SELECT
+            distinct_match = re.match(r'^\s+DISTINCT\b', sql_query[last_select_idx:], re.IGNORECASE)
+            if distinct_match:
+                insert_pos = last_select_idx + distinct_match.end()
+                sql_query = sql_query[:insert_pos] + f" TOP {limit_val}" + sql_query[insert_pos:]
+            else:
+                sql_query = sql_query[:last_select_idx] + f" TOP {limit_val}" + sql_query[last_select_idx:]
+                
+    return sql_query
+
+
 def execute_sql_query(sql_query: str) -> pd.DataFrame:
     """
-    TODO
+    Executes a read-only SQL query, automatically sanitizing syntax based on the active dialect.
     """
     # don't repeat yourself approach
     engine = _get_engine()
+    dialect = get_db_dialect()
+
+    # If using Azure SQL / T-SQL, sanitize query syntax prior to execution
+    if "SQLite" not in dialect:
+        sql_query = _clean_sql_for_azure(sql_query)
     
     # Safe execution of the read-only sql query
     with engine.connect() as connection:
