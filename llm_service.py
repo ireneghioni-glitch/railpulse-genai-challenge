@@ -90,7 +90,11 @@ def generate_sql_query(history: list, db_dialect: str = "SQLite") -> str:
     if "SQLite" in db_dialect:
         limit_instruction = "Use 'LIMIT N' at the very end of the query (e.g., ORDER BY count DESC LIMIT 5)."
     else:
-        limit_instruction = "STRICTLY use 'SELECT TOP N' right after SELECT (e.g., SELECT TOP 5 s.stop_name...). DO NOT use the word 'LIMIT' anywhere in the query!"
+        limit_instruction = """STRICTLY use 'SELECT TOP N' right after SELECT. DO NOT use the word 'LIMIT' anywhere in the query!
+
+            EXAMPLE FOR RESULT LIMITATION (AZURE SQL / T-SQL):
+            - WRONG: SELECT s.stop_name FROM stops GROUP BY s.stop_name ORDER BY delay_count DESC LIMIT 5
+            - CORRECT: SELECT TOP 5 s.stop_name FROM stops GROUP BY s.stop_name ORDER BY delay_count DESC"""
 
     system_prompt = f'''
             You are an expert Transport Data Analyst specializing in the RailPulse GTFS database.
