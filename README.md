@@ -18,7 +18,7 @@
   </a>
 </p>
 
-RailPulse AI Assistant is an interactive Natural Language to SQL (NL2SQL) conversational interface designed for querying public transit data from the Belgian National Railway company (SNCB/NMBS). Built on a dual-stage LLM architecture powered by Llama 3.3 via Groq and connected directly to an Azure SQL Server cloud database, the assistant translates plain English or French questions into optimized dialect-aware SQL queries, executes them in real time, and synthesizes data-backed natural language responses.
+RailPulse AI Assistant is an interactive Natural Language to SQL (NL2SQL) conversational interface designed for querying public transit data from the Belgian National Railway company (SNCB/NMBS). Built on a dual-stage LLM architecture powered by Llama 3.3 via Groq and connected directly to an Azure SQL Server cloud database, the assistant translates plain English questions (with station names in EN, FR, or NL to semplify usage) into optimized dialect-aware SQL queries, executes them in real time and synthesizes data-backed natural language responses. 
 
 * **Domain:** Generative AI, Public Transit Analytics & Conversational Data Interfaces
 * **Execution Timeframe:** 5-Day Sprint (Learning Challenge)
